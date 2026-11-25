@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-FileCopyrightText: 2026 David Härdeman <david@hardeman.nu>
+
+option('bpf', type: 'boolean', value: true,
+	description: 'BPF translation backend (the stopgap until ipxlat is everywhere)')
+option('bpf_cc', type: 'string', value: 'clang',
+	description: 'compiler for the BPF program')
+option('bpf_cflags', type: 'array', value: [],
+	description: 'extra flags for the BPF program (e.g. include paths)')
+option('bpf_object', type: 'string', value: '',
+	description: 'prebuilt BPF object (e.g. from OpenWrt\'s CompileBPF); skips bpf_cc')

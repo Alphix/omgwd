@@ -1,0 +1,12 @@
+version = 1
+
+[[annotations]]
+path = ".clang-format"
+precedence = "override"
+SPDX-FileCopyrightText = "The Linux kernel authors"
+SPDX-License-Identifier = "GPL-2.0-only"
+
+[[annotations]]
+path = "patches/*.patch"
+SPDX-FileCopyrightText = "2026 David Härdeman <david@hardeman.nu>"
+SPDX-License-Identifier = "GPL-2.0-only"

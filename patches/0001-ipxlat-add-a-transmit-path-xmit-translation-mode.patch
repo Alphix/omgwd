@@ -1,0 +1,235 @@
+From ab48b77e4e2b17a7f911b68629f51a6597d0331f Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?David=20H=C3=A4rdeman?= <david@hardeman.nu>
+Date: Wed, 18 Nov 2026 15:42:21 +0000
+Subject: [RFC PATCH ipxlat] ipxlat: add a transmit-path (xmit) translation
+ mode
+
+With IPXLAT_A_XMIT, a route translates in the LWT xmit hook, after
+POST_ROUTING, so NAT in the original family happens before translation.
+This enables:
+
+- a stateful NAT64: SNAT66 into a translatable range, then stateless
+  translation, without a veth loop;
+- a host CLAT with masqueraded containers or VMs behind it.
+
+Translated packets with a local source continue in the target family's
+local output path; all others are re-injected into its PRE_ROUTING on
+the route's device, with the TTL/Hop Limit decrement restored (one
+decrement per translator, RFC 7915).
+---
+
+RFC; applies to the ipxlat branch at d5ed63c55.
+
+Use case 1, an mDNS gateway for IPv6-mostly networks: on-link IPv6
+"stand-ins" for IPv4-only LAN devices, used by clients with arbitrary
+addresses. That needs SNAT66 before translation; the only workaround in
+input/output mode, a veth loop, passes conntrack twice (ICMP echo ids
+get rewritten, TTL is decremented twice).
+
+Use case 2, a host CLAT with masqueraded containers (docker, podman,
+libvirt): in output mode their packets are translated before IPv4
+POST_ROUTING, so MASQUERADE never applies.
+
+Tested in virtme-ng netns: TCP, UDP and ICMP echo plus TTL handling for
+use case 1; ping from the host and a container with IPv6 forwarding off
+and on for use case 2; the ipxlat selftest (10/10).
+
+Open questions:
+ - flag vs. a mode attribute
+ - the per-packet local address lookup vs. a route attribute
+ - detecting forwarded packets via skb->skb_iif
+ - no ICMP errors for failed translations yet
+
+ include/uapi/linux/ipxlat.h |   2 +
+ net/ipxlat/lwt.c            | 115 +++++++++++++++++++++++++++++++++++-
+ 2 files changed, 114 insertions(+), 3 deletions(-)
+
+diff --git a/include/uapi/linux/ipxlat.h b/include/uapi/linux/ipxlat.h
+index 018de958f..656a334f2 100644
+--- a/include/uapi/linux/ipxlat.h
++++ b/include/uapi/linux/ipxlat.h
+@@ -28,6 +28,8 @@ enum {
+ 	 * attributes
+ 	 */
+ 	IPXLAT_A_EAMT,
++	/* flag: translate in the transmit path, after POST_ROUTING */
++	IPXLAT_A_XMIT,
+ 	__IPXLAT_A_MAX,
+ };
+ 
+diff --git a/net/ipxlat/lwt.c b/net/ipxlat/lwt.c
+index 6b26edb5f..1a907eb22 100644
+--- a/net/ipxlat/lwt.c
++++ b/net/ipxlat/lwt.c
+@@ -33,6 +33,7 @@
+ 
+ struct ipxlat_lwt {
+ 	struct ipxlat_config config;
++	bool xmit;
+ };
+ 
+ static struct ipxlat_lwt *ipxlat_lwt_state(const struct lwtunnel_state *lws)
+@@ -58,6 +59,7 @@ static const struct nla_policy ipxlat_lwt_policy[IPXLAT_A_MAX + 1] = {
+ 		NLA_POLICY_NESTED(ipxlat_prefix6_policy),
+ 	[IPXLAT_A_EAMT] =
+ 		NLA_POLICY_NESTED_ARRAY(ipxlat_eam_policy),
++	[IPXLAT_A_XMIT] = { .type = NLA_FLAG },
+ };
+ 
+ static void ipxlat_normalize_prefix6(struct ipxlat_prefix6 *prefix)
+@@ -237,9 +239,14 @@ static int ipxlat_build_state(struct net *net, struct nlattr *nla,
+ 
+ 	ilwt = ipxlat_lwt_state(newts);
+ 	ilwt->config = config;
++	ilwt->xmit = nla_get_flag(tb[IPXLAT_A_XMIT]);
+ 	newts->type = LWTUNNEL_ENCAP_IPXLAT;
+-	newts->flags = LWTUNNEL_STATE_INPUT_REDIRECT |
+-		       LWTUNNEL_STATE_OUTPUT_REDIRECT;
++	if (ilwt->xmit)
++		/* translate after POST_ROUTING, e.g. after NAT66 */
++		newts->flags = LWTUNNEL_STATE_XMIT_REDIRECT;
++	else
++		newts->flags = LWTUNNEL_STATE_INPUT_REDIRECT |
++			       LWTUNNEL_STATE_OUTPUT_REDIRECT;
+ 	*ts = newts;
+ 
+ 	return 0;
+@@ -250,6 +257,9 @@ static int ipxlat_fill_encap(struct sk_buff *skb, struct lwtunnel_state *lws)
+ 	const struct ipxlat_config *cfg = &ipxlat_lwt_state(lws)->config;
+ 	struct nlattr *prefix, *eamt, *eam;
+ 
++	if (ipxlat_lwt_state(lws)->xmit && nla_put_flag(skb, IPXLAT_A_XMIT))
++		return -EMSGSIZE;
++
+ 	prefix = nla_nest_start_noflag(skb, IPXLAT_A_RFC6052_PREFIX6);
+ 	if (!prefix)
+ 		return -EMSGSIZE;
+@@ -303,6 +313,8 @@ static int ipxlat_get_encap_size(struct lwtunnel_state *lws)
+ 	prefix_payload_size = nla_total_size(sizeof(struct in6_addr)) +
+ 			      nla_total_size(sizeof(u8));
+ 	size = nla_total_size(prefix_payload_size);
++	if (ipxlat_lwt_state(lws)->xmit)
++		size += nla_total_size(0);
+ 	if (cfg->has_eam) {
+ 		eam_payload_size = nla_total_size(sizeof(__be32)) +
+ 				   nla_total_size(sizeof(u8)) +
+@@ -320,7 +332,8 @@ static int ipxlat_cmp_encap(struct lwtunnel_state *a, struct lwtunnel_state *b)
+ 	const struct ipxlat_config *ac = &ipxlat_lwt_state(a)->config;
+ 	const struct ipxlat_config *bc = &ipxlat_lwt_state(b)->config;
+ 
+-	if (ac->has_eam != bc->has_eam ||
++	if (ipxlat_lwt_state(a)->xmit != ipxlat_lwt_state(b)->xmit ||
++	    ac->has_eam != bc->has_eam ||
+ 	    ac->rfc6052_prefix6.len != bc->rfc6052_prefix6.len ||
+ 	    !ipv6_addr_equal(&ac->rfc6052_prefix6.addr,
+ 			      &bc->rfc6052_prefix6.addr))
+@@ -616,10 +629,106 @@ static int ipxlat_lwt_output(struct net *net, struct sock *sk,
+ 	return ipxlat_handoff_output(net, skb);
+ }
+ 
++/* Is the source of the translated packet one of our own addresses? */
++static bool ipxlat_saddr_is_local(struct net *net, struct net_device *dev,
++				  const struct sk_buff *skb)
++{
++	if (skb->protocol == htons(ETH_P_IP))
++		return inet_addr_type_dev_table(net, dev, ip_hdr(skb)->saddr) ==
++		       RTN_LOCAL;
++	return ipv6_chk_addr(net, &ipv6_hdr(skb)->saddr, NULL, 0);
++}
++
++/* Transmit-path translation (IPXLAT_A_XMIT): called from
++ * ip{,6}_finish_output2() after POST_ROUTING, so NAT on the original family
++ * (e.g. SNAT66 of clients into the translatable range, or MASQUERADE of
++ * containers behind a host CLAT) has already been applied.
++ *
++ * Where the translated packet continues depends on its new source:
++ *
++ * - A local address (a host CLAT: the CLAT IPv6 address, also for
++ *   masqueraded traffic): the packet is the host's own in the target family
++ *   and continues in its local output path, as in output mode. Target-family
++ *   forwarding is not involved, so a host CLAT works with forwarding off.
++ *
++ * - Any other address (a PLAT, SNAT66 into a stand-in range): the packet is
++ *   handed to the target family as if received on the route's device. It
++ *   passes PRE_ROUTING, routing and FORWARD/INPUT there, like packets
++ *   translated in the input path, with the route's device as its iif.
++ *   A forwarded packet has then been forwarded by both families. A
++ *   translator is one router and decrements TTL/Hop Limit once (RFC 7915),
++ *   so the translated header gets the decrement of the original-family
++ *   forwarding back. Locally originated packets are only forwarded by the
++ *   target family and are left alone.
++ */
++static int ipxlat_lwt_xmit(struct sk_buff *skb)
++{
++	struct dst_entry *dst = skb_dst(skb);
++	const struct lwtunnel_state *lws = dst->lwtstate;
++	u8 cb_snapshot[sizeof_field(struct sk_buff, cb)];
++	struct net_device *dev = dst->dev;
++	bool forwarded = skb->skb_iif != 0;
++	const struct ipxlat_config *cfg;
++	int ret;
++
++	cfg = &ipxlat_lwt_state(lws)->config;
++
++	memcpy(cb_snapshot, skb->cb, sizeof(cb_snapshot));
++	ret = ipxlat_prepare(cfg, skb);
++	if (ret == -EOPNOTSUPP) {
++		/* not translatable: continue with normal neighbour output */
++		memcpy(skb->cb, cb_snapshot, sizeof(cb_snapshot));
++		return LWTUNNEL_XMIT_CONTINUE;
++	}
++	if (ret) {
++		kfree_skb(skb);
++		return LWTUNNEL_XMIT_DONE;
++	}
++
++	ret = ipxlat_translate(cfg, dev_net(dev), skb);
++	if (ret) {
++		kfree_skb(skb);
++		return LWTUNNEL_XMIT_DONE;
++	}
++
++	ipxlat_scrub_translated(skb);
++	skb_reset_network_header(skb);
++	if (ipxlat_saddr_is_local(dev_net(dev), dev, skb)) {
++		ipxlat_handoff_output(dev_net(dev), skb);
++		return LWTUNNEL_XMIT_DONE;
++	}
++
++	skb->dev = dev;
++	skb->pkt_type = PACKET_HOST;
++	skb->skb_iif = dev->ifindex;
++	if (skb->protocol == htons(ETH_P_IP))
++		IPCB(skb)->iif = dev->ifindex;
++	else
++		IP6CB(skb)->iif = dev->ifindex;
++	if (forwarded) {
++		if (skb->protocol == htons(ETH_P_IP)) {
++			struct iphdr *iph = ip_hdr(skb);
++
++			if (iph->ttl < 255) {
++				iph->ttl++;
++				ip_send_check(iph);
++			}
++		} else if (ipv6_hdr(skb)->hop_limit < 255) {
++			ipv6_hdr(skb)->hop_limit++;
++		}
++	}
++	if (skb->protocol == htons(ETH_P_IP))
++		ip_rcv_lwt(skb);
++	else
++		ip6_rcv_lwt(skb);
++	return LWTUNNEL_XMIT_DONE;
++}
++
+ static const struct lwtunnel_encap_ops ipxlat_lwt_ops = {
+ 	.build_state = ipxlat_build_state,
+ 	.output = ipxlat_lwt_output,
+ 	.input = ipxlat_lwt_input,
++	.xmit = ipxlat_lwt_xmit,
+ 	.fill_encap = ipxlat_fill_encap,
+ 	.get_encap_size = ipxlat_get_encap_size,
+ 	.cmp_encap = ipxlat_cmp_encap,
+-- 
+2.47.3
+
