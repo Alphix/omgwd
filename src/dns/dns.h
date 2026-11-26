@@ -4,7 +4,6 @@
 #ifndef ODNSD_DNS_H
 #define ODNSD_DNS_H
 
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <netinet/in.h>

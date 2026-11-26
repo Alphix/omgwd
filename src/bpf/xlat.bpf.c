@@ -15,7 +15,6 @@
 #include <linux/pkt_cls.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
-#include <stdbool.h>
 #include <stddef.h>
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>

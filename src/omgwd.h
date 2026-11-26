@@ -4,7 +4,6 @@
 #ifndef OMGWD_H
 #define OMGWD_H
 
-#include <stdbool.h>
 #include <stdint.h>
 #include <netinet/in.h>
 #include <syslog.h>

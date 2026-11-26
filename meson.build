@@ -80,7 +80,7 @@ if get_option('bpf')
 			output: 'xlat.bpf.o',
 			depend_files: files('src/bpf/xlat_cfg.h'),
 			command: [find_program(get_option('bpf_cc')),
-				'-O2', '-g', '-Wall', '-target', 'bpf', bpf_cflags,
+				'-std=gnu23', '-O2', '-g', '-Wall', '-target', 'bpf', bpf_cflags,
 				'-I' + meson.current_source_dir() / 'src/bpf',
 				'-c', '@INPUT@', '-o', '@OUTPUT@'])
 	endif
