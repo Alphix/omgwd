@@ -116,7 +116,7 @@ static void send_na(struct iface *i, const struct in6_addr *to,
 	pi->ipi6_ifindex = i->ifindex;
 
 	if (sendmsg(send_fd, &msg, 0) < 0)
-		log_debug("%s: NA: %s", i->name, strerror(errno));
+		log_debug("%s: NA: %m", i->name);
 	else
 		i->tx_na++;
 }
@@ -167,7 +167,7 @@ int ndp_open(struct iface *i)
 			       sizeof(hops)) ||
 		    setsockopt(send_fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS,
 			       &hops, sizeof(hops))) {
-			log_err("NDP send socket: %s", strerror(errno));
+			log_err("NDP send socket: %m");
 			return -1;
 		}
 		ICMP6_FILTER_SETBLOCKALL(&f);
@@ -184,10 +184,8 @@ int ndp_open(struct iface *i)
 		       sizeof(ns_filter)) ||
 	    bind(fd, (struct sockaddr *)&sll, sizeof(sll)) ||
 	    setsockopt(fd, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mreq,
-		       sizeof(mreq))) {
-		close(fd);
+		       sizeof(mreq)))
 		goto err;
-	}
 
 	i->ndp_fd.fd = fd;
 	i->ndp_fd.cb = ns_cb;
@@ -196,7 +194,9 @@ int ndp_open(struct iface *i)
 	return 0;
 
 err:
-	log_err("%s: NDP responder: %s", i->name, strerror(errno));
+	log_err("%s: NDP responder: %m", i->name);
+	if (fd >= 0)
+		close(fd);
 	return -1;
 }
 

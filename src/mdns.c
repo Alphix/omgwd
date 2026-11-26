@@ -158,7 +158,7 @@ static void recv_cb(struct uloop_fd *u, unsigned int events)
 		n = recvmsg(u->fd, &msg, MSG_DONTWAIT);
 		if (n < 0) {
 			if (errno != EAGAIN && errno != EINTR)
-				log_warn("recvmsg: %s", strerror(errno));
+				log_warn("recvmsg: %m");
 			return;
 		}
 
@@ -241,8 +241,7 @@ static int open_socket(int family)
 	}
 	return fd;
 err:
-	log_err("mDNS %s socket: %s", family == AF_INET ? "IPv4" : "IPv6",
-		strerror(errno));
+	log_err("mDNS %s socket: %m", family == AF_INET ? "IPv4" : "IPv6");
 	close(fd);
 	return -1;
 }
@@ -297,7 +296,7 @@ int mdns_send(struct iface *i, int family, const uint8_t *buf, size_t len)
 	}
 
 	if (sendmsg(fd, &msg, 0) < 0) {
-		log_debug("%s: send: %s", i->name, strerror(errno));
+		log_debug("%s: send: %m", i->name);
 		return -1;
 	}
 	sent_remember(i->ifindex, family, buf, len);
@@ -342,8 +341,8 @@ static bool membership(struct iface *i, int family, bool join)
 	if (ret && join && errno == EADDRINUSE)
 		ret = 0;
 	if (ret && join)
-		log_warn("%s: cannot join the %s mDNS group: %s", i->name,
-			 family == AF_INET ? "IPv4" : "IPv6", strerror(errno));
+		log_warn("%s: cannot join the %s mDNS group: %m", i->name,
+			 family == AF_INET ? "IPv4" : "IPv6");
 	return !ret;
 }
 
