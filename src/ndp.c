@@ -168,6 +168,10 @@ int ndp_open(struct iface *i)
 		    setsockopt(send_fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS,
 			       &hops, sizeof(hops))) {
 			log_err("NDP send socket: %m");
+			if (send_fd >= 0) {
+				close(send_fd);
+				send_fd = -1;
+			}
 			return -1;
 		}
 		ICMP6_FILTER_SETBLOCKALL(&f);
