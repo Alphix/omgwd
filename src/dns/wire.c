@@ -43,7 +43,7 @@ static int rd_name(struct reader *r, uint8_t *out)
 	unsigned int hops = 0;
 	size_t min_ptr = r->pos; /* pointers must point before this */
 
-	for (;;) {
+	while (true) {
 		uint8_t l;
 
 		if (pos >= r->len)
@@ -474,7 +474,7 @@ static bool wb_name_equal_suffix(struct wire_buf *w, size_t off,
 {
 	unsigned int hops = 0;
 
-	for (;;) {
+	while (true) {
 		uint8_t l = w->buf[off];
 
 		if ((l & 0xc0) == 0xc0) {

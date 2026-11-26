@@ -131,7 +131,7 @@ static void recv_cb(struct uloop_fd *u, unsigned int events)
 {
 	int family = u == &sock4 ? AF_INET : AF_INET6;
 
-	for (;;) {
+	while (true) {
 		uint8_t buf[9000];
 		union {
 			struct sockaddr_in in;

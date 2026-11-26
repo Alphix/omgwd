@@ -73,7 +73,7 @@ static int nl_talk(struct nlreq *r)
 		   sizeof(sa)) < 0)
 		return -errno;
 
-	for (;;) {
+	while (true) {
 		n = recv(nl_fd, ack, sizeof(ack), 0);
 		if (n < 0)
 			return -errno;
