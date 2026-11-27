@@ -198,9 +198,9 @@ static void add_device(const char *net, const struct in6_addr *standin,
 
 /*
  * nft -f - without a shell (the jail has none): the script on stdin, its
- * messages collected for the log. 0 on success.
+ * messages collected for the log. True on success.
  */
-static int run_nft(const char *script)
+static bool run_nft(const char *script)
 {
 	static const char *const paths[] = { "/usr/sbin/nft", "/sbin/nft",
 					     "/usr/bin/nft" };
@@ -211,11 +211,11 @@ static int run_nft(const char *script)
 	pid_t pid;
 
 	if (pipe2(in, O_CLOEXEC))
-		return -1;
+		return false;
 	if (pipe2(out, O_CLOEXEC)) {
 		close(in[0]);
 		close(in[1]);
-		return -1;
+		return false;
 	}
 	pid = fork();
 	if (pid == 0) {
@@ -257,20 +257,20 @@ static int run_nft(const char *script)
 		/* SIGSYS: a syscall missing from the seccomp filter (nft inherits it) */
 		log_warn("nft killed by signal %d (%s)", WTERMSIG(status),
 			 strsignal(WTERMSIG(status)));
-		return -1;
+		return false;
 	}
 	if (pid < 0 || !WIFEXITED(status) || WEXITSTATUS(status)) {
 		log_warn("nft failed (%d): %s\nfor:\n%s",
 			 pid > 0 && WIFEXITED(status) ? WEXITSTATUS(status) :
 							-1,
 			 msg, script);
-		return -1;
+		return false;
 	}
 	log_debug("nft ruleset:\n%s", script);
-	return 0;
+	return true;
 }
 
-static int nft_apply(bool active)
+static bool nft_apply(bool active)
 {
 	char *script = NULL, a[INET6_ADDRSTRLEN], b[INET6_ADDRSTRLEN];
 	size_t size = 0;
@@ -278,11 +278,11 @@ static int nft_apply(bool active)
 	struct in_addr p4;
 	struct iface *i;
 	FILE *f;
-	int ret;
+	bool ok;
 
 	f = open_memstream(&script, &size);
 	if (!f)
-		return -1;
+		return false;
 
 	/* atomic replace: create (if missing), delete, define */
 	fprintf(f, "table ip6 omgwd\ndelete table ip6 omgwd\n");
@@ -363,9 +363,9 @@ static int nft_apply(bool active)
 	}
 	fclose(f);
 
-	ret = run_nft(script);
+	ok = run_nft(script);
 	free(script);
-	return ret;
+	return ok;
 }
 
 /* ---- sync ---------------------------------------------------------------------- */

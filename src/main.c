@@ -26,7 +26,7 @@ int64_t now_ms(void)
 static void reload_cb(struct uloop_signal *s)
 {
 	log_info("SIGHUP: reloading configuration");
-	if (!config_load()) {
+	if (config_load()) {
 		iface_refresh();
 		standin_changed();
 	}
@@ -87,13 +87,13 @@ int main(int argc, char **argv)
 	uloop_init();
 	signal(SIGPIPE, SIG_IGN); /* nft exiting early must not kill us */
 
-	if (config_load())
+	if (!config_load())
 		return 1;
 
 	iface_init();
 	state_init();
 	standin_init();
-	if (mdns_init())
+	if (!mdns_init())
 		return 1;
 	ubus_init();
 	uloop_signal_add(&reload_signal);

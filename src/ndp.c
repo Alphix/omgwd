@@ -40,13 +40,13 @@ static struct iface *iface_by_ndp_fd(struct uloop_fd *u)
 	return container_of(u, struct iface, ndp_fd);
 }
 
-static int link_local(const char *dev, struct in6_addr *ll)
+static bool link_local(const char *dev, struct in6_addr *ll)
 {
 	struct ifaddrs *ifa, *a;
-	int ret = -1;
+	bool found = false;
 
 	if (getifaddrs(&ifa))
-		return -1;
+		return false;
 
 	for (a = ifa; a; a = a->ifa_next) {
 		struct sockaddr_in6 *s = (struct sockaddr_in6 *)a->ifa_addr;
@@ -55,13 +55,13 @@ static int link_local(const char *dev, struct in6_addr *ll)
 		    !strcmp(a->ifa_name, dev) &&
 		    IN6_IS_ADDR_LINKLOCAL(&s->sin6_addr)) {
 			*ll = s->sin6_addr;
-			ret = 0;
+			found = true;
 			break;
 		}
 	}
 
 	freeifaddrs(ifa);
-	return ret;
+	return found;
 }
 
 static void send_na(struct iface *i, const struct in6_addr *to,
@@ -93,7 +93,7 @@ static void send_na(struct iface *i, const struct in6_addr *to,
 
 	snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "%s", i->device);
 	if (ioctl(send_fd, SIOCGIFHWADDR, &ifr) < 0 ||
-	    link_local(i->device, &ll))
+	    !link_local(i->device, &ll))
 		return;
 
 	na.na.nd_na_type = ND_NEIGHBOR_ADVERT;
@@ -143,7 +143,7 @@ static void ns_cb(struct uloop_fd *u, unsigned int events)
 	}
 }
 
-int ndp_open(struct iface *i)
+bool ndp_open(struct iface *i)
 {
 	struct sockaddr_ll sll = {
 		.sll_family = AF_PACKET,
@@ -172,7 +172,7 @@ int ndp_open(struct iface *i)
 				close(send_fd);
 				send_fd = -1;
 			}
-			return -1;
+			return false;
 		}
 		ICMP6_FILTER_SETBLOCKALL(&f);
 		setsockopt(send_fd, IPPROTO_ICMPV6, ICMP6_FILTER, &f,
@@ -195,13 +195,13 @@ int ndp_open(struct iface *i)
 	i->ndp_fd.cb = ns_cb;
 	uloop_fd_add(&i->ndp_fd, ULOOP_READ);
 	log_debug("%s: NDP responder on %s", i->name, i->device);
-	return 0;
+	return true;
 
 err:
 	log_err("%s: NDP responder: %m", i->name);
 	if (fd >= 0)
 		close(fd);
-	return -1;
+	return false;
 }
 
 void ndp_close(struct iface *i)

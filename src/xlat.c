@@ -225,10 +225,10 @@ static bool keep_service_rr(const struct iface *a, const struct iface *b,
 	return false;
 }
 
-static int put_translated(struct wire_buf *w, int section,
-			  const struct iface *a, const struct iface *b,
-			  const struct rr_list *l, const struct hostsel *h,
-			  size_t n_h, size_t *n_put)
+static bool put_translated(struct wire_buf *w, int section,
+			   const struct iface *a, const struct iface *b,
+			   const struct rr_list *l, const struct hostsel *h,
+			   size_t n_h, size_t *n_put)
 {
 	for (size_t i = 0; i < l->n; i++) {
 		const struct dns_rr *rr = &l->rr[i];
@@ -249,9 +249,9 @@ static int put_translated(struct wire_buf *w, int section,
 		if (instance && rr->type == DNS_T_A && rr->rdlen == 4) {
 			if (answer_suppress(b, rr)) {
 				/* sent within a second: leave out (the stand-in too) */
-			} else if (wire_put_rr(w, section, rr, rr->ttl) &&
+			} else if (!wire_put_rr(w, section, rr, rr->ttl) &&
 				   section != WIRE_AR) {
-				return -1;
+				return false;
 			} else {
 				(*n_put)++;
 			}
@@ -267,9 +267,9 @@ static int put_translated(struct wire_buf *w, int section,
 					 rr->class, rr->ttl);
 				if (answer_suppress(b, &aaaa))
 					continue;
-				if (wire_put_rr(w, section, &aaaa, rr->ttl) &&
+				if (!wire_put_rr(w, section, &aaaa, rr->ttl) &&
 				    section != WIRE_AR)
-					return -1;
+					return false;
 				(*n_put)++;
 			}
 			continue;
@@ -277,13 +277,13 @@ static int put_translated(struct wire_buf *w, int section,
 
 		if (!instance && keep_service_rr(a, b, rr) &&
 		    !answer_suppress(b, rr)) {
-			if (wire_put_rr(w, section, rr, rr->ttl) &&
+			if (!wire_put_rr(w, section, rr, rr->ttl) &&
 			    section != WIRE_AR)
-				return -1;
+				return false;
 			(*n_put)++;
 		}
 	}
-	return 0;
+	return true;
 }
 
 static void xlat_response(struct iface *a, struct iface *b,
@@ -296,16 +296,16 @@ static void xlat_response(struct iface *a, struct iface *b,
 	select_hosts(a, b, &m->an, h, &n_h, ARRAY_SIZE(h));
 	select_hosts(a, b, &m->ar, h, &n_h, ARRAY_SIZE(h));
 
-	if (wire_init(&w, 9000) || wire_put_header(&w, 0, m->flags) ||
-	    put_translated(&w, WIRE_AN, a, b, &m->an, h, n_h, &n_put) ||
-	    put_translated(&w, WIRE_NS, a, b, &m->ns, h, n_h, &n_put) ||
-	    put_translated(&w, WIRE_AR, a, b, &m->ar, h, n_h, &n_put)) {
+	if (!wire_init(&w, 9000) || !wire_put_header(&w, 0, m->flags) ||
+	    !put_translated(&w, WIRE_AN, a, b, &m->an, h, n_h, &n_put) ||
+	    !put_translated(&w, WIRE_NS, a, b, &m->ns, h, n_h, &n_put) ||
+	    !put_translated(&w, WIRE_AR, a, b, &m->ar, h, n_h, &n_put)) {
 		log_debug("%s -> %s: cannot build the translated response",
 			  a->name, b->name);
 		goto out;
 	}
 
-	if (n_put && !mdns_send(b, AF_INET6, w.buf, w.len))
+	if (n_put && mdns_send(b, AF_INET6, w.buf, w.len))
 		b->tx_translated++;
 out:
 	wire_free(&w);
@@ -325,7 +325,7 @@ static void xlat_query(struct iface *a, struct iface *b,
 	struct wire_buf w;
 	size_t n_q = 0;
 
-	if (wire_init(&w, 9000) || wire_put_header(&w, 0, m->flags))
+	if (!wire_init(&w, 9000) || !wire_put_header(&w, 0, m->flags))
 		goto out;
 
 	for (size_t i = 0; i < m->n_qd; i++) {
@@ -337,12 +337,12 @@ static void xlat_query(struct iface *a, struct iface *b,
 		if (type == DNS_T_A ? !host_allowed(a, b, q->name) :
 				      !pair_allows(a, b, q->name))
 			continue;
-		if (wire_put_question(&w, q->name, type, q->class & 0x7fff))
+		if (!wire_put_question(&w, q->name, type, q->class & 0x7fff))
 			goto out;
 		n_q++;
 	}
 
-	if (n_q && !mdns_send(a, AF_INET, w.buf, w.len))
+	if (n_q && mdns_send(a, AF_INET, w.buf, w.len))
 		a->tx_translated++;
 out:
 	wire_free(&w);
@@ -421,10 +421,10 @@ static void send_goodbye(struct iface *b, struct adv *ad)
 	struct wire_buf w;
 
 	dname_copy(rr.name, ad->host);
-	if (!wire_init(&w, 9000) &&
-	    !wire_put_header(&w, 0, DNS_F_QR | DNS_F_AA) &&
-	    !wire_put_rr(&w, WIRE_AN, &rr, 0) &&
-	    !mdns_send(b, AF_INET6, w.buf, w.len))
+	if (wire_init(&w, 9000) &&
+	    wire_put_header(&w, 0, DNS_F_QR | DNS_F_AA) &&
+	    wire_put_rr(&w, WIRE_AN, &rr, 0) &&
+	    mdns_send(b, AF_INET6, w.buf, w.len))
 		b->tx_translated++;
 	wire_free(&w);
 }

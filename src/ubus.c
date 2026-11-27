@@ -110,7 +110,7 @@ static int handle_reload(struct ubus_context *ctx, struct ubus_object *obj,
 			 struct ubus_request_data *req, const char *method,
 			 struct blob_attr *msg)
 {
-	if (config_load())
+	if (!config_load())
 		return UBUS_STATUS_INVALID_ARGUMENT;
 	iface_refresh();
 	standin_changed();

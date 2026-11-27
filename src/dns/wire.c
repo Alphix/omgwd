@@ -14,23 +14,23 @@ struct reader {
 	size_t pos;
 };
 
-static int rd_u16(struct reader *r, uint16_t *v)
+static bool rd_u16(struct reader *r, uint16_t *v)
 {
 	if (r->pos + 2 > r->len)
-		return -1;
+		return false;
 	*v = (r->buf[r->pos] << 8) | r->buf[r->pos + 1];
 	r->pos += 2;
-	return 0;
+	return true;
 }
 
-static int rd_u32(struct reader *r, uint32_t *v)
+static bool rd_u32(struct reader *r, uint32_t *v)
 {
 	if (r->pos + 4 > r->len)
-		return -1;
+		return false;
 	*v = ((uint32_t)r->buf[r->pos] << 24) | (r->buf[r->pos + 1] << 16) |
 	     (r->buf[r->pos + 2] << 8) | r->buf[r->pos + 3];
 	r->pos += 4;
-	return 0;
+	return true;
 }
 
 /*
@@ -88,8 +88,8 @@ static int rd_name(struct reader *r, uint8_t *out)
 }
 
 /* Copy RDATA, decompressing embedded names of types where that is allowed. */
-static int rd_rdata(struct reader *r, uint16_t type, uint16_t rdlen,
-		    uint8_t **out, uint16_t *outlen)
+static bool rd_rdata(struct reader *r, uint16_t type, uint16_t rdlen,
+		     uint8_t **out, uint16_t *outlen)
 {
 	size_t start = r->pos, end = r->pos + rdlen;
 	uint8_t tmp[DNS_MAX_UDP * 2 + 2 * (DNAME_MAX + 1)];
@@ -98,16 +98,16 @@ static int rd_rdata(struct reader *r, uint16_t type, uint16_t rdlen,
 	int n;
 
 	if (end > r->len)
-		return -1;
+		return false;
 
 	if (!rr_type_has_names(type)) {
 		*out = malloc(rdlen ? rdlen : 1);
 		if (!*out)
-			return -1;
+			return false;
 		memcpy(*out, r->buf + start, rdlen);
 		*outlen = rdlen;
 		r->pos = end;
-		return 0;
+		return true;
 	}
 
 	/* names may point anywhere earlier in the message: parse with full buffer */
@@ -118,19 +118,19 @@ static int rd_rdata(struct reader *r, uint16_t type, uint16_t rdlen,
 	do {                                \
 		n = rd_name(&sub, tmp + o); \
 		if (n < 0)                  \
-			return -1;          \
+			return false;       \
 		o += n;                     \
 	} while (0)
 #define CHARSTR()                            \
 	do {                                 \
 		if (sub.pos >= end)          \
-			return -1;           \
+			return false;        \
 		FIXED(1 + sub.buf[sub.pos]); \
 	} while (0)
 #define FIXED(len)                                                    \
 	do {                                                          \
 		if (sub.pos + (len) > end || o + (len) > sizeof(tmp)) \
-			return -1;                                    \
+			return false;                                 \
 		memcpy(tmp + o, sub.buf + sub.pos, (len));            \
 		o += (len);                                           \
 		sub.pos += (len);                                     \
@@ -186,43 +186,43 @@ static int rd_rdata(struct reader *r, uint16_t type, uint16_t rdlen,
 		unsigned int plen;
 
 		if (sub.pos >= end)
-			return -1;
+			return false;
 		plen = sub.buf[sub.pos];
 		if (plen > 128)
-			return -1;
+			return false;
 		FIXED(1 + (128 - plen + 7) / 8);
 		if (plen)
 			NAME();
 		break;
 	}
 	default:
-		return -1;
+		return false;
 	}
 #undef NAME
 #undef CHARSTR
 #undef FIXED
 
 	if (sub.pos != end)
-		return -1;
+		return false;
 
 	*out = malloc(o);
 	if (!*out)
-		return -1;
+		return false;
 
 	memcpy(*out, tmp, o);
 	*outlen = o;
 	r->pos = end;
 
-	return 0;
+	return true;
 }
 
-static int parse_opt(struct dns_msg *m, uint16_t udp_size, uint32_t ttl,
-		     const uint8_t *rdata, uint16_t rdlen)
+static bool parse_opt(struct dns_msg *m, uint16_t udp_size, uint32_t ttl,
+		      const uint8_t *rdata, uint16_t rdlen)
 {
 	size_t pos = 0;
 
 	if (m->edns.present)
-		return -1; /* only one OPT allowed */
+		return false; /* only one OPT allowed */
 
 	m->edns.present = true;
 	m->edns.udp_size = udp_size < DNS_MAX_UDP ? DNS_MAX_UDP : udp_size;
@@ -236,7 +236,7 @@ static int parse_opt(struct dns_msg *m, uint16_t udp_size, uint32_t ttl,
 
 		pos += 4;
 		if (pos + len > rdlen)
-			return -1;
+			return false;
 
 		switch (code) {
 		case EDNS_OPT_EDE:
@@ -257,7 +257,7 @@ static int parse_opt(struct dns_msg *m, uint16_t udp_size, uint32_t ttl,
 		pos += len;
 	}
 
-	return pos == rdlen ? 0 : -1;
+	return pos == rdlen;
 }
 
 void dns_msg_init(struct dns_msg *m)
@@ -279,17 +279,17 @@ void dns_msg_free(struct dns_msg *m)
 	rr_list_free(&m->ar);
 }
 
-int wire_peek_id(const uint8_t *buf, size_t len, uint16_t *id)
+bool wire_peek_id(const uint8_t *buf, size_t len, uint16_t *id)
 {
 	if (len < DNS_HDR_LEN)
-		return -1;
+		return false;
 
 	*id = (buf[0] << 8) | buf[1];
-	return 0;
+	return true;
 }
 
-int wire_parse(const uint8_t *buf, size_t len, struct dns_msg *m,
-	       bool question_only)
+bool wire_parse(const uint8_t *buf, size_t len, struct dns_msg *m,
+		bool question_only)
 {
 	struct reader r = { .buf = buf, .len = len };
 	uint16_t qd, counts[3];
@@ -297,24 +297,24 @@ int wire_parse(const uint8_t *buf, size_t len, struct dns_msg *m,
 
 	dns_msg_init(m);
 
-	if (rd_u16(&r, &m->id) || rd_u16(&r, &m->flags) || rd_u16(&r, &qd) ||
-	    rd_u16(&r, &counts[0]) || rd_u16(&r, &counts[1]) ||
-	    rd_u16(&r, &counts[2]))
-		return -1;
+	if (!rd_u16(&r, &m->id) || !rd_u16(&r, &m->flags) || !rd_u16(&r, &qd) ||
+	    !rd_u16(&r, &counts[0]) || !rd_u16(&r, &counts[1]) ||
+	    !rd_u16(&r, &counts[2]))
+		return false;
 
 	if (qd > DNS_MAX_QUESTIONS)
-		return -1;
+		return false;
 
 	if (qd) {
 		m->qd = calloc(qd, sizeof(*m->qd));
 		if (!m->qd)
-			return -1;
+			return false;
 
 		for (unsigned int i = 0; i < qd; i++) {
 			struct dns_question *q = &m->qd[i];
 
-			if (rd_name(&r, q->name) < 0 || rd_u16(&r, &q->type) ||
-			    rd_u16(&r, &q->class))
+			if (rd_name(&r, q->name) < 0 || !rd_u16(&r, &q->type) ||
+			    !rd_u16(&r, &q->class))
 				goto error;
 			m->n_qd++;
 		}
@@ -328,7 +328,7 @@ int wire_parse(const uint8_t *buf, size_t len, struct dns_msg *m,
 	for (int s = 0; s < 3; s++) {
 		/* a query only carries OPT in the additional section */
 		if (question_only && s < 2 && counts[s])
-			return -1;
+			return false;
 
 		for (unsigned int i = 0; i < counts[s]; i++) {
 			uint8_t name[DNAME_MAX + 1];
@@ -337,16 +337,16 @@ int wire_parse(const uint8_t *buf, size_t len, struct dns_msg *m,
 			uint8_t *rdata = NULL;
 			struct dns_rr *rr;
 
-			if (rd_name(&r, name) < 0 || rd_u16(&r, &type) ||
-			    rd_u16(&r, &class) || rd_u32(&r, &ttl) ||
-			    rd_u16(&r, &rdlen))
+			if (rd_name(&r, name) < 0 || !rd_u16(&r, &type) ||
+			    !rd_u16(&r, &class) || !rd_u32(&r, &ttl) ||
+			    !rd_u16(&r, &rdlen))
 				goto error;
 
 			if (type == DNS_T_OPT) {
 				if (s != 2 || name[0] != 0 ||
 				    r.pos + rdlen > r.len ||
-				    parse_opt(m, class, ttl, r.buf + r.pos,
-					      rdlen))
+				    !parse_opt(m, class, ttl, r.buf + r.pos,
+					       rdlen))
 					goto error;
 				r.pos += rdlen;
 				continue;
@@ -360,7 +360,7 @@ int wire_parse(const uint8_t *buf, size_t len, struct dns_msg *m,
 				continue;
 			}
 
-			if (rd_rdata(&r, type, rdlen, &rdata, &outlen))
+			if (!rd_rdata(&r, type, rdlen, &rdata, &outlen))
 				goto error;
 
 			rr = rr_list_add(lists[s], name, type, class, ttl, NULL,
@@ -376,21 +376,21 @@ int wire_parse(const uint8_t *buf, size_t len, struct dns_msg *m,
 	}
 
 	/* trailing garbage is tolerated, as most implementations do */
-	return 0;
+	return true;
 
 error:
 	dns_msg_free(m);
-	return -1;
+	return false;
 }
 
 /* ---- builder ------------------------------------------------------------- */
 
-static int wb_reserve(struct wire_buf *w, size_t n)
+static bool wb_reserve(struct wire_buf *w, size_t n)
 {
 	size_t need = w->len + n;
 
 	if (need > DNS_MAX_MSG)
-		return -1;
+		return false;
 
 	if (need > w->size) {
 		size_t size = w->size ? w->size : 512;
@@ -404,13 +404,13 @@ static int wb_reserve(struct wire_buf *w, size_t n)
 
 		buf = realloc(w->buf, size);
 		if (!buf)
-			return -1;
+			return false;
 
 		w->buf = buf;
 		w->size = size;
 	}
 
-	return 0;
+	return true;
 }
 
 static void wb_u16(struct wire_buf *w, uint16_t v)
@@ -436,7 +436,7 @@ static uint16_t wb_get_u16(struct wire_buf *w, size_t pos)
 	return (w->buf[pos] << 8) | w->buf[pos + 1];
 }
 
-int wire_init(struct wire_buf *w, size_t limit)
+bool wire_init(struct wire_buf *w, size_t limit)
 {
 	memset(w, 0, sizeof(*w));
 	w->limit = limit ? limit : DNS_MAX_UDP;
@@ -449,14 +449,14 @@ void wire_free(struct wire_buf *w)
 	w->buf = NULL;
 }
 
-int wire_put_header(struct wire_buf *w, uint16_t id, uint16_t flags)
+bool wire_put_header(struct wire_buf *w, uint16_t id, uint16_t flags)
 {
 	w->len = 0;
 	w->n_comp = 0;
 	w->truncated = false;
 
-	if (wb_reserve(w, DNS_HDR_LEN))
-		return -1;
+	if (!wb_reserve(w, DNS_HDR_LEN))
+		return false;
 
 	wb_u16(w, id);
 	wb_u16(w, flags);
@@ -465,7 +465,7 @@ int wire_put_header(struct wire_buf *w, uint16_t id, uint16_t flags)
 	wb_u16(w, 0);
 	wb_u16(w, 0);
 
-	return 0;
+	return true;
 }
 
 /* Length of the name at offset off in the output buffer, following pointers. */
@@ -500,7 +500,7 @@ static bool wb_name_equal_suffix(struct wire_buf *w, size_t off,
 }
 
 /* Write a name, compressing against previously written names. */
-static int wb_name(struct wire_buf *w, const uint8_t *name, bool compress)
+static bool wb_name(struct wire_buf *w, const uint8_t *name, bool compress)
 {
 	const uint8_t *p = name;
 	/*
@@ -515,15 +515,15 @@ static int wb_name(struct wire_buf *w, const uint8_t *name, bool compress)
 				if (!wb_name_equal_suffix(w, w->comp[i], p))
 					continue;
 
-				if (wb_reserve(w, 2))
-					return -1;
+				if (!wb_reserve(w, 2))
+					return false;
 				wb_u16(w, 0xc000 | w->comp[i]);
-				return 0;
+				return true;
 			}
 		}
 
-		if (wb_reserve(w, *p + 1))
-			return -1;
+		if (!wb_reserve(w, *p + 1))
+			return false;
 
 		if (compress && w->len < 0x3fff &&
 		    w->n_comp < sizeof(w->comp) / sizeof(w->comp[0]))
@@ -534,28 +534,28 @@ static int wb_name(struct wire_buf *w, const uint8_t *name, bool compress)
 		p += *p + 1;
 	}
 
-	if (wb_reserve(w, 1))
-		return -1;
+	if (!wb_reserve(w, 1))
+		return false;
 	w->buf[w->len++] = 0;
 
-	return 0;
+	return true;
 }
 
-int wire_put_question(struct wire_buf *w, const uint8_t *qname, uint16_t qtype,
-		      uint16_t qclass)
+bool wire_put_question(struct wire_buf *w, const uint8_t *qname, uint16_t qtype,
+		       uint16_t qclass)
 {
-	if (wb_name(w, qname, true) || wb_reserve(w, 4))
-		return -1;
+	if (!wb_name(w, qname, true) || !wb_reserve(w, 4))
+		return false;
 
 	wb_u16(w, qtype);
 	wb_u16(w, qclass);
 	wb_set_u16(w, 4, wb_get_u16(w, 4) + 1);
 
-	return 0;
+	return true;
 }
 
 /* Write RDATA, compressing names only for the types RFC 3597 allows. */
-static int wb_rdata(struct wire_buf *w, const struct dns_rr *rr)
+static bool wb_rdata(struct wire_buf *w, const struct dns_rr *rr)
 {
 	const uint8_t *p = rr->rdata;
 	bool compress;
@@ -574,47 +574,47 @@ static int wb_rdata(struct wire_buf *w, const struct dns_rr *rr)
 	}
 
 	if (!compress) {
-		if (wb_reserve(w, rr->rdlen))
-			return -1;
+		if (!wb_reserve(w, rr->rdlen))
+			return false;
 		memcpy(w->buf + w->len, rr->rdata, rr->rdlen);
 		w->len += rr->rdlen;
-		return 0;
+		return true;
 	}
 
 	switch (rr->type) {
 	case DNS_T_MX:
-		if (wb_reserve(w, 2))
-			return -1;
+		if (!wb_reserve(w, 2))
+			return false;
 		memcpy(w->buf + w->len, p, 2);
 		w->len += 2;
 		return wb_name(w, p + 2, true);
 	case DNS_T_SOA:
-		if (wb_name(w, p, true))
-			return -1;
+		if (!wb_name(w, p, true))
+			return false;
 		p += dname_len(p);
-		if (wb_name(w, p, true))
-			return -1;
+		if (!wb_name(w, p, true))
+			return false;
 		p += dname_len(p);
-		if (wb_reserve(w, 20))
-			return -1;
+		if (!wb_reserve(w, 20))
+			return false;
 		memcpy(w->buf + w->len, p, 20);
 		w->len += 20;
-		return 0;
+		return true;
 	default:
 		return wb_name(w, p, true);
 	}
 }
 
-int wire_put_rr(struct wire_buf *w, int section, const struct dns_rr *rr,
-		uint32_t ttl)
+bool wire_put_rr(struct wire_buf *w, int section, const struct dns_rr *rr,
+		 uint32_t ttl)
 {
 	size_t start = w->len, rdpos;
 	unsigned int n_comp = w->n_comp;
 
 	if (w->truncated)
-		return -1;
+		return false;
 
-	if (wb_name(w, rr->name, true) || wb_reserve(w, 10))
+	if (!wb_name(w, rr->name, true) || !wb_reserve(w, 10))
 		goto overflow;
 
 	wb_u16(w, rr->type);
@@ -623,7 +623,7 @@ int wire_put_rr(struct wire_buf *w, int section, const struct dns_rr *rr,
 	rdpos = w->len;
 	wb_u16(w, 0);
 
-	if (wb_rdata(w, rr))
+	if (!wb_rdata(w, rr))
 		goto overflow;
 
 	wb_set_u16(w, rdpos, w->len - rdpos - 2);
@@ -632,7 +632,7 @@ int wire_put_rr(struct wire_buf *w, int section, const struct dns_rr *rr,
 		goto overflow;
 
 	wb_set_u16(w, 6 + 2 * section, wb_get_u16(w, 6 + 2 * section) + 1);
-	return 0;
+	return true;
 
 overflow:
 	/* roll back the partial record */
@@ -642,18 +642,19 @@ overflow:
 		w->truncated = true;
 		wire_set_flags(w, DNS_F_TC, 0);
 	}
-	return -1;
+	return false;
 }
 
-int wire_put_opt(struct wire_buf *w, uint16_t udp_size, uint8_t ext_rcode,
-		 bool do_bit, int ede, const char *ede_text, const uint8_t *mac,
-		 size_t mac_len, uint16_t mac_code, size_t pad_block)
+bool wire_put_opt(struct wire_buf *w, uint16_t udp_size, uint8_t ext_rcode,
+		  bool do_bit, int ede, const char *ede_text,
+		  const uint8_t *mac, size_t mac_len, uint16_t mac_code,
+		  size_t pad_block)
 {
 	size_t rdpos, start = w->len;
 	size_t tlen = ede_text ? strlen(ede_text) : 0;
 
-	if (wb_reserve(w, 11))
-		return -1;
+	if (!wb_reserve(w, 11))
+		return false;
 
 	w->buf[w->len++] = 0; /* root name */
 	wb_u16(w, DNS_T_OPT);
@@ -663,7 +664,7 @@ int wire_put_opt(struct wire_buf *w, uint16_t udp_size, uint8_t ext_rcode,
 	wb_u16(w, 0);
 
 	if (ede >= 0) {
-		if (wb_reserve(w, 6 + tlen))
+		if (!wb_reserve(w, 6 + tlen))
 			goto error;
 		wb_u16(w, EDNS_OPT_EDE);
 		wb_u16(w, 2 + tlen);
@@ -674,7 +675,7 @@ int wire_put_opt(struct wire_buf *w, uint16_t udp_size, uint8_t ext_rcode,
 	}
 
 	if (mac && mac_len) {
-		if (wb_reserve(w, 4 + mac_len))
+		if (!wb_reserve(w, 4 + mac_len))
 			goto error;
 		wb_u16(w, mac_code);
 		wb_u16(w, mac_len);
@@ -687,7 +688,7 @@ int wire_put_opt(struct wire_buf *w, uint16_t udp_size, uint8_t ext_rcode,
 		size_t total = w->len + 4;
 		size_t pad = (pad_block - total % pad_block) % pad_block;
 
-		if (wb_reserve(w, 4 + pad))
+		if (!wb_reserve(w, 4 + pad))
 			goto error;
 		wb_u16(w, EDNS_OPT_PADDING);
 		wb_u16(w, pad);
@@ -697,11 +698,11 @@ int wire_put_opt(struct wire_buf *w, uint16_t udp_size, uint8_t ext_rcode,
 
 	wb_set_u16(w, rdpos, w->len - rdpos - 2);
 	wb_set_u16(w, 10, wb_get_u16(w, 10) + 1);
-	return 0;
+	return true;
 
 error:
 	w->len = start;
-	return -1;
+	return false;
 }
 
 void wire_set_rcode(struct wire_buf *w, unsigned int rcode)

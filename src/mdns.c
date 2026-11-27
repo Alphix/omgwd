@@ -102,7 +102,7 @@ static void handle_packet(struct iface *i, int family, const void *src,
 	else
 		i->rx6++;
 
-	if (wire_parse(buf, len, &m, false)) {
+	if (!wire_parse(buf, len, &m, false)) {
 		i->rx_bad++;
 		return;
 	}
@@ -248,7 +248,7 @@ err:
 
 /* ---- sending -------------------------------------------------------------- */
 
-int mdns_send(struct iface *i, int family, const uint8_t *buf, size_t len)
+bool mdns_send(struct iface *i, int family, const uint8_t *buf, size_t len)
 {
 	uint8_t cbuf[CMSG_SPACE(sizeof(struct in6_pktinfo))] = { 0 };
 	struct iovec iov = { .iov_base = (void *)buf, .iov_len = len };
@@ -263,7 +263,7 @@ int mdns_send(struct iface *i, int family, const uint8_t *buf, size_t len)
 	int fd;
 
 	if (!(family == AF_INET ? i->joined4 : i->joined6) || !i->ifindex)
-		return -1;
+		return false;
 
 	cm = (struct cmsghdr *)cbuf;
 	if (family == AF_INET) {
@@ -297,23 +297,23 @@ int mdns_send(struct iface *i, int family, const uint8_t *buf, size_t len)
 
 	if (sendmsg(fd, &msg, 0) < 0) {
 		log_debug("%s: send: %m", i->name);
-		return -1;
+		return false;
 	}
 	sent_remember(i->ifindex, family, buf, len);
-	return 0;
+	return true;
 }
 
-int mdns_init(void)
+bool mdns_init(void)
 {
 	sock4.fd = open_socket(AF_INET);
 	sock6.fd = open_socket(AF_INET6);
 	if (sock4.fd < 0 || sock6.fd < 0)
-		return -1;
+		return false;
 
 	sock4.cb = sock6.cb = recv_cb;
 	uloop_fd_add(&sock4, ULOOP_READ);
 	uloop_fd_add(&sock6, ULOOP_READ);
-	return 0;
+	return true;
 }
 
 static bool membership(struct iface *i, int family, bool join)

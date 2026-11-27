@@ -328,7 +328,7 @@ static int hexval(int c)
 }
 
 /* Parse a complete reverse name back into an address. */
-int dname_to_addr(const uint8_t *name, int *family, void *addr)
+bool dname_to_addr(const uint8_t *name, int *family, void *addr)
 {
 	int labels = dname_labels(name);
 	const uint8_t *p = name;
@@ -340,23 +340,23 @@ int dname_to_addr(const uint8_t *name, int *family, void *addr)
 			unsigned int v = 0, l = *p++;
 
 			if (!l || l > 3)
-				return -1;
+				return false;
 
 			for (unsigned int j = 0; j < l; j++) {
 				if (!isdigit(p[j]))
-					return -1;
+					return false;
 				v = v * 10 + (p[j] - '0');
 			}
 
 			if (v > 255)
-				return -1;
+				return false;
 
 			a[i] = v;
 			p += l;
 		}
 
 		*family = AF_INET;
-		return 0;
+		return true;
 	}
 
 	if (labels == 34 && dname_is_subdomain(name, ip6_arpa)) {
@@ -367,17 +367,17 @@ int dname_to_addr(const uint8_t *name, int *family, void *addr)
 			int v;
 
 			if (*p != 1 || (v = hexval(p[1])) < 0)
-				return -1;
+				return false;
 
 			a[i / 2] |= (i & 1) ? v : v << 4;
 			p += 2;
 		}
 
 		*family = AF_INET6;
-		return 0;
+		return true;
 	}
 
-	return -1;
+	return false;
 }
 
 /*

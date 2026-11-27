@@ -160,7 +160,7 @@ bool dname_valid_hostname(const char *str);
 
 /* reverse names (in-addr.arpa / ip6.arpa) */
 int dname_from_addr(uint8_t *out, int family, const void *addr);
-int dname_to_addr(const uint8_t *name, int *family, void *addr);
+bool dname_to_addr(const uint8_t *name, int *family, void *addr);
 int dname_reverse_zone(uint8_t *out, int family, const void *addr,
 		       int prefix_len);
 
@@ -186,7 +186,7 @@ void rr_list_free(struct rr_list *l);
 struct dns_rr *rr_list_add(struct rr_list *l, const uint8_t *name,
 			   uint16_t type, uint16_t class, uint32_t ttl,
 			   const void *rdata, uint16_t rdlen);
-int rr_list_append(struct rr_list *dst, const struct rr_list *src);
+bool rr_list_append(struct rr_list *dst, const struct rr_list *src);
 
 const char *rr_type_name(uint16_t type, char *buf, size_t len);
 int rr_type_from_name(const char *name);
@@ -251,9 +251,9 @@ static inline unsigned int dns_msg_opcode(const struct dns_msg *m)
 
 void dns_msg_init(struct dns_msg *m);
 void dns_msg_free(struct dns_msg *m);
-int wire_parse(const uint8_t *buf, size_t len, struct dns_msg *m,
-	       bool question_only);
-int wire_peek_id(const uint8_t *buf, size_t len, uint16_t *id);
+bool wire_parse(const uint8_t *buf, size_t len, struct dns_msg *m,
+		bool question_only);
+bool wire_peek_id(const uint8_t *buf, size_t len, uint16_t *id);
 
 struct wire_buf {
 	uint8_t *buf;
@@ -267,16 +267,17 @@ struct wire_buf {
 	size_t opt_reserve; /* bytes reserved for the OPT record */
 };
 
-int wire_init(struct wire_buf *w, size_t limit);
+bool wire_init(struct wire_buf *w, size_t limit);
 void wire_free(struct wire_buf *w);
-int wire_put_header(struct wire_buf *w, uint16_t id, uint16_t flags);
-int wire_put_question(struct wire_buf *w, const uint8_t *qname, uint16_t qtype,
-		      uint16_t qclass);
-int wire_put_rr(struct wire_buf *w, int section, const struct dns_rr *rr,
-		uint32_t ttl);
-int wire_put_opt(struct wire_buf *w, uint16_t udp_size, uint8_t ext_rcode,
-		 bool do_bit, int ede, const char *ede_text, const uint8_t *mac,
-		 size_t mac_len, uint16_t mac_code, size_t pad_block);
+bool wire_put_header(struct wire_buf *w, uint16_t id, uint16_t flags);
+bool wire_put_question(struct wire_buf *w, const uint8_t *qname, uint16_t qtype,
+		       uint16_t qclass);
+bool wire_put_rr(struct wire_buf *w, int section, const struct dns_rr *rr,
+		 uint32_t ttl);
+bool wire_put_opt(struct wire_buf *w, uint16_t udp_size, uint8_t ext_rcode,
+		  bool do_bit, int ede, const char *ede_text,
+		  const uint8_t *mac, size_t mac_len, uint16_t mac_code,
+		  size_t pad_block);
 void wire_set_rcode(struct wire_buf *w, unsigned int rcode);
 void wire_set_flags(struct wire_buf *w, uint16_t set, uint16_t clear);
 

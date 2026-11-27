@@ -60,17 +60,17 @@ struct dns_rr *rr_list_add(struct rr_list *l, const uint8_t *name,
 	return rr;
 }
 
-int rr_list_append(struct rr_list *dst, const struct rr_list *src)
+bool rr_list_append(struct rr_list *dst, const struct rr_list *src)
 {
 	for (size_t i = 0; i < src->n; i++) {
 		const struct dns_rr *rr = &src->rr[i];
 
 		if (!rr_list_add(dst, rr->name, rr->type, rr->class, rr->ttl,
 				 rr->rdata, rr->rdlen))
-			return -1;
+			return false;
 	}
 
-	return 0;
+	return true;
 }
 
 static const struct {
@@ -211,19 +211,19 @@ static bool tok_done(struct tok *t)
 	return !*t->p;
 }
 
-static int tok_uint(struct tok *t, unsigned long max, unsigned long *v)
+static bool tok_uint(struct tok *t, unsigned long max, unsigned long *v)
 {
 	char buf[32], *end;
 	bool q;
 
 	if (next_token(t, buf, sizeof(buf), &q) <= 0)
-		return -1;
+		return false;
 
 	*v = strtoul(buf, &end, 10);
 	if (*end || *v > max)
-		return -1;
+		return false;
 
-	return 0;
+	return true;
 }
 
 static int tok_name(struct tok *t, uint8_t *out, size_t outlen)
@@ -300,7 +300,7 @@ static bool generic_names_valid(uint16_t type, const uint8_t *rdata, size_t len)
 	put16(msg + DNS_HDR_LEN + 9, len);
 	memcpy(msg + DNS_HDR_LEN + 11, rdata, len);
 
-	if (wire_parse(msg, DNS_HDR_LEN + 11 + len, &m, false))
+	if (!wire_parse(msg, DNS_HDR_LEN + 11 + len, &m, false))
 		return false;
 
 	/* nothing was compressed: the parsed RDATA is the input */
@@ -333,7 +333,7 @@ int rr_rdata_from_str(uint16_t type, const char *str, uint8_t *out,
 	if (!strncmp(t.p, "\\#", 2) &&
 	    (isspace((unsigned char)t.p[2]) || !t.p[2])) {
 		t.p += 2;
-		if (tok_uint(&t, 65535, &v))
+		if (!tok_uint(&t, 65535, &v))
 			return -1;
 		n = tok_hex(&t, out, outlen);
 		if (n < 0 || (unsigned long)n != v)
@@ -364,15 +364,15 @@ int rr_rdata_from_str(uint16_t type, const char *str, uint8_t *out,
 		o = tok_name(&t, out, outlen);
 		break;
 	case DNS_T_MX:
-		if (outlen < 2 || tok_uint(&t, 65535, &v))
+		if (outlen < 2 || !tok_uint(&t, 65535, &v))
 			return -1;
 		put16(out, v);
 		n = tok_name(&t, out + 2, outlen - 2);
 		o = n < 0 ? -1 : n + 2;
 		break;
 	case DNS_T_SRV:
-		if (outlen < 6 || tok_uint(&t, 65535, &v) ||
-		    tok_uint(&t, 65535, &v2) || tok_uint(&t, 65535, &v3))
+		if (outlen < 6 || !tok_uint(&t, 65535, &v) ||
+		    !tok_uint(&t, 65535, &v2) || !tok_uint(&t, 65535, &v3))
 			return -1;
 		put16(out, v);
 		put16(out + 2, v2);
@@ -393,7 +393,7 @@ int rr_rdata_from_str(uint16_t type, const char *str, uint8_t *out,
 			return -1;
 		return o;
 	case DNS_T_CAA:
-		if (tok_uint(&t, 255, &v))
+		if (!tok_uint(&t, 255, &v))
 			return -1;
 		n = next_token(&t, buf, sizeof(buf), &q);
 		if (n <= 0 || n > 255 || 2 + n > (int)outlen)
@@ -409,8 +409,8 @@ int rr_rdata_from_str(uint16_t type, const char *str, uint8_t *out,
 		o += n;
 		break;
 	case DNS_T_SSHFP:
-		if (outlen < 2 || tok_uint(&t, 255, &v) ||
-		    tok_uint(&t, 255, &v2))
+		if (outlen < 2 || !tok_uint(&t, 255, &v) ||
+		    !tok_uint(&t, 255, &v2))
 			return -1;
 		out[0] = v;
 		out[1] = v2;
@@ -418,8 +418,8 @@ int rr_rdata_from_str(uint16_t type, const char *str, uint8_t *out,
 		return n <= 0 ? -1 : n + 2;
 	case DNS_T_DS:
 		/* key tag, algorithm, digest type, digest (hex) */
-		if (outlen < 4 || tok_uint(&t, 65535, &v) ||
-		    tok_uint(&t, 255, &v2) || tok_uint(&t, 255, &v3))
+		if (outlen < 4 || !tok_uint(&t, 65535, &v) ||
+		    !tok_uint(&t, 255, &v2) || !tok_uint(&t, 255, &v3))
 			return -1;
 		put16(out, v);
 		out[2] = v2;
@@ -427,8 +427,8 @@ int rr_rdata_from_str(uint16_t type, const char *str, uint8_t *out,
 		n = tok_hex(&t, out + 4, outlen - 4);
 		return n <= 0 ? -1 : n + 4;
 	case DNS_T_TLSA:
-		if (outlen < 3 || tok_uint(&t, 255, &v) ||
-		    tok_uint(&t, 255, &v2) || tok_uint(&t, 255, &v3))
+		if (outlen < 3 || !tok_uint(&t, 255, &v) ||
+		    !tok_uint(&t, 255, &v2) || !tok_uint(&t, 255, &v3))
 			return -1;
 		out[0] = v;
 		out[1] = v2;

@@ -124,15 +124,15 @@ struct config {
 
 extern struct config config;
 
-int config_load(void);
+bool config_load(void);
 void config_free(struct config *c);
 bool config_uses_network(const char *name);
 bool link_allows(const struct link *l, const uint8_t *name);
 
 struct uci_section;
 extern const char *quirk_dir;
-int overrides_parse_section(struct uci_section *s, struct list_head *out);
-int overrides_load_quirks(struct list_head *out);
+bool overrides_parse_section(struct uci_section *s, struct list_head *out);
+void overrides_load_quirks(struct list_head *out);
 void overrides_free(struct list_head *l);
 void override_eval(const struct ov_subject *s, struct ov_result *r);
 bool override_sets(enum ov_knob k);
@@ -190,10 +190,10 @@ bool iface_addr_is_standin(const struct in6_addr *a);
 
 /* ---- mDNS sockets (mdns.c) ----------------------------------------------- */
 
-int mdns_init(void);
+bool mdns_init(void);
 void mdns_sync(void);
 void mdns_leave(struct iface *i);
-int mdns_send(struct iface *i, int family, const uint8_t *buf, size_t len);
+bool mdns_send(struct iface *i, int family, const uint8_t *buf, size_t len);
 
 /* ---- repeating within one address family (repeat.c) ---------------------- */
 
@@ -289,7 +289,7 @@ int bpf_xlat_attach(int ifindex);
 int bpf_xlat_config(const struct xlat_cfg *cfg);
 void bpf_xlat_unload(void);
 
-int ndp_open(struct iface *i);
+bool ndp_open(struct iface *i);
 void ndp_close(struct iface *i);
 
 /* ---- ubus (ubus.c) --------------------------------------------------------- */

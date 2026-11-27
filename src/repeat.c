@@ -207,21 +207,21 @@ static void collect_targets(const struct rr_list *l, const struct svcset *set,
 	}
 }
 
-static int put_section(struct wire_buf *w, int section, const struct iface *in,
-		       const struct dns_msg *m, const struct rr_list *l,
-		       const struct svcset *set, const uint8_t **targets,
-		       size_t n_targets, size_t *n_put)
+static bool put_section(struct wire_buf *w, int section, const struct iface *in,
+			const struct dns_msg *m, const struct rr_list *l,
+			const struct svcset *set, const uint8_t **targets,
+			size_t n_targets, size_t *n_put)
 {
 	for (size_t i = 0; i < l->n; i++) {
 		if (!rr_in_set(&l->rr[i], set, targets, n_targets) ||
 		    rr_dropped(in, m, &l->rr[i]))
 			continue;
-		if (wire_put_rr(w, section, &l->rr[i], l->rr[i].ttl) &&
+		if (!wire_put_rr(w, section, &l->rr[i], l->rr[i].ttl) &&
 		    section != WIRE_AR)
-			return -1;
+			return false;
 		(*n_put)++;
 	}
-	return 0;
+	return true;
 }
 
 /* rebuild m for one target: QU cleared, only what the set allows */
@@ -232,7 +232,7 @@ static int build(struct wire_buf *w, const struct iface *in,
 	const uint8_t *targets[32];
 	size_t n_targets = 0, n_q = 0, n_rr = 0;
 
-	if (wire_init(w, 9000) || wire_put_header(w, m->id, m->flags))
+	if (!wire_init(w, 9000) || !wire_put_header(w, m->id, m->flags))
 		return -1;
 
 	if (!set->all) {
@@ -249,17 +249,17 @@ static int build(struct wire_buf *w, const struct iface *in,
 		    !(q->type == DNS_T_PTR &&
 		      dname_equal(q->name, services_enum_name())))
 			continue;
-		if (wire_put_question(w, q->name, q->type, q->class & 0x7fff))
+		if (!wire_put_question(w, q->name, q->type, q->class & 0x7fff))
 			return -1;
 		n_q++;
 	}
 
-	if (put_section(w, WIRE_AN, in, m, &m->an, set, targets, n_targets,
-			&n_rr) ||
-	    put_section(w, WIRE_NS, in, m, &m->ns, set, targets, n_targets,
-			&n_rr) ||
-	    put_section(w, WIRE_AR, in, m, &m->ar, set, targets, n_targets,
-			&n_rr))
+	if (!put_section(w, WIRE_AN, in, m, &m->an, set, targets, n_targets,
+			 &n_rr) ||
+	    !put_section(w, WIRE_NS, in, m, &m->ns, set, targets, n_targets,
+			 &n_rr) ||
+	    !put_section(w, WIRE_AR, in, m, &m->ar, set, targets, n_targets,
+			 &n_rr))
 		return -1;
 
 	/* nothing left worth sending */
@@ -300,13 +300,13 @@ void repeat_packet(struct iface *in, int family, const uint8_t *buf, size_t len,
 			continue;
 
 		if (verbatim && set.all) {
-			if (!mdns_send(t, family, buf, len))
+			if (mdns_send(t, family, buf, len))
 				t->tx_repeated++;
 			continue;
 		}
 
 		ret = build(&w, in, m, &set, response);
-		if (!ret && !mdns_send(t, family, w.buf, w.len))
+		if (!ret && mdns_send(t, family, w.buf, w.len))
 			t->tx_repeated++;
 		else if (ret < 0)
 			log_debug("%s -> %s: cannot rebuild the message",

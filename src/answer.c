@@ -285,17 +285,18 @@ static void send_answer(struct answer *ans)
 	if (!n_an)
 		return;
 
-	if (wire_init(&w, 9000) || wire_put_header(&w, 0, DNS_F_QR | DNS_F_AA))
+	if (!wire_init(&w, 9000) ||
+	    !wire_put_header(&w, 0, DNS_F_QR | DNS_F_AA))
 		goto out;
 	for (int sec = WIRE_AN; sec <= WIRE_AR; sec++)
 		for (size_t i = 0; i < ans->n; i++)
 			if (ans->out[i].section == sec &&
-			    wire_put_rr(&w, sec, &ans->out[i].rr,
-					ans->out[i].rr.ttl) &&
+			    !wire_put_rr(&w, sec, &ans->out[i].rr,
+					 ans->out[i].rr.ttl) &&
 			    sec != WIRE_AR)
 				goto out;
 
-	if (!mdns_send(ans->b, AF_INET6, w.buf, w.len)) {
+	if (mdns_send(ans->b, AF_INET6, w.buf, w.len)) {
 		ans->b->tx_answered++;
 		for (size_t i = 0; i < ans->n; i++)
 			if (ans->out[i].section >= 0)

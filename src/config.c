@@ -42,18 +42,18 @@ static void strv_free(char **v, size_t n)
 	free(v);
 }
 
-static int strv_add(char ***v, size_t *n, const char *s)
+static bool strv_add(char ***v, size_t *n, const char *s)
 {
 	char **nv = realloc(*v, (*n + 1) * sizeof(*nv));
 
 	if (!nv)
-		return -1;
+		return false;
 	*v = nv;
 	nv[*n] = strdup(s);
 	if (!nv[*n])
-		return -1;
+		return false;
 	(*n)++;
-	return 0;
+	return true;
 }
 
 void config_free(struct config *c)
@@ -108,7 +108,7 @@ static bool opt_bool(struct uci_section *s, const char *name, bool def)
 	       !strcmp(v, "true");
 }
 
-static int parse_main(struct uci_section *s, struct config *c)
+static bool parse_main(struct uci_section *s, struct config *c)
 {
 	struct uci_context *ctx = s->package->ctx;
 	const char *v;
@@ -123,13 +123,13 @@ static int parse_main(struct uci_section *s, struct config *c)
 		c->ndp = NDP_KERNEL;
 	else {
 		log_err("invalid ndp '%s' (self, kernel)", v);
-		return -1;
+		return false;
 	}
 
 	v = uci_lookup_option_string(ctx, s, "pool4");
 	if (v && inet_pton(AF_INET, v, &c->pool4) != 1) {
 		log_err("invalid pool4 '%s'", v);
-		return -1;
+		return false;
 	}
 
 	v = uci_lookup_option_string(ctx, s, "pref64");
@@ -145,7 +145,7 @@ static int parse_main(struct uci_section *s, struct config *c)
 			if (inet_pton(AF_INET6, buf, &c->pref64) != 1 ||
 			    (slash && strcmp(slash + 1, "96"))) {
 				log_err("invalid pref64 '%s' (an IPv6 /96)", v);
-				return -1;
+				return false;
 			}
 			c->has_pref64 = true;
 		}
@@ -162,28 +162,28 @@ static int parse_main(struct uci_section *s, struct config *c)
 		c->xlat = XLAT_NONE;
 	else {
 		log_err("invalid xlat '%s' (auto, ipxlat, bpf, none)", v);
-		return -1;
+		return false;
 	}
 
-	return 0;
+	return true;
 }
 
-static int add_list(struct uci_section *s, const char *name, char ***v,
-		    size_t *n)
+static bool add_list(struct uci_section *s, const char *name, char ***v,
+		     size_t *n)
 {
 	struct uci_option *o = uci_lookup_option(s->package->ctx, s, name);
 	struct uci_element *e;
 
 	if (!o)
-		return 0;
+		return true;
 	if (o->type == UCI_TYPE_STRING)
 		return strv_add(v, n, o->v.string);
 	uci_foreach_element(&o->v.list,
-			    e) if (strv_add(v, n, e->name)) return -1;
-	return 0;
+			    e) if (!strv_add(v, n, e->name)) return false;
+	return true;
 }
 
-static int parse_link(struct uci_section *s, struct config *c)
+static bool parse_link(struct uci_section *s, struct config *c)
 {
 	struct uci_context *ctx = s->package->ctx;
 	const char *from = uci_lookup_option_string(ctx, s, "from");
@@ -191,29 +191,29 @@ static int parse_link(struct uci_section *s, struct config *c)
 
 	if (!from) {
 		log_err("link '%s' without 'from'", s->e.name);
-		return -1;
+		return false;
 	}
 
 	l = calloc(1, sizeof(*l));
 	if (!l)
-		return -1;
+		return false;
 	l->name = strdup(s->e.name);
 	l->from = strdup(from);
 	list_add_tail(&l->list, &c->links);
 
-	if (!l->name || !l->from || add_list(s, "to", &l->to, &l->n_to) ||
-	    add_list(s, "service", &l->services, &l->n_services))
-		return -1;
+	if (!l->name || !l->from || !add_list(s, "to", &l->to, &l->n_to) ||
+	    !add_list(s, "service", &l->services, &l->n_services))
+		return false;
 
 	if (!l->n_to) {
 		log_err("link '%s' without 'to'", s->e.name);
-		return -1;
+		return false;
 	}
 
 	if (l->n_services) {
 		l->svc_names = calloc(l->n_services, sizeof(*l->svc_names));
 		if (!l->svc_names)
-			return -1;
+			return false;
 		for (size_t i = 0; i < l->n_services; i++) {
 			char buf[DNAME_STR_MAX];
 
@@ -221,14 +221,14 @@ static int parse_link(struct uci_section *s, struct config *c)
 			if (dname_from_str(l->svc_names[i], buf) < 0) {
 				log_err("link '%s': invalid service '%s'",
 					s->e.name, l->services[i]);
-				return -1;
+				return false;
 			}
 		}
 	}
-	return 0;
+	return true;
 }
 
-int config_load(void)
+bool config_load(void)
 {
 	struct uci_context *ctx = uci_alloc_context();
 	struct config c = { .links = LIST_HEAD_INIT(c.links),
@@ -236,10 +236,10 @@ int config_load(void)
 	struct uci_package *pkg = NULL;
 	struct uci_element *e;
 	bool have_main = false;
-	int ret = -1;
+	bool ok = false;
 
 	if (!ctx)
-		return -1;
+		return false;
 	if (uci_confdir)
 		uci_set_confdir(ctx, uci_confdir);
 
@@ -259,13 +259,13 @@ int config_load(void)
 			if (have_main)
 				continue;
 			have_main = true;
-			if (parse_main(s, &c))
+			if (!parse_main(s, &c))
 				goto out;
 		} else if (!strcmp(s->type, "link")) {
-			if (parse_link(s, &c))
+			if (!parse_link(s, &c))
 				goto out;
 		} else if (!strcmp(s->type, "override")) {
-			if (overrides_parse_section(s, &c.overrides))
+			if (!overrides_parse_section(s, &c.overrides))
 				goto out;
 		}
 	}
@@ -290,7 +290,7 @@ int config_load(void)
 	config.pref64 = c.pref64;
 	list_splice_init(&c.links, &config.links);
 	list_splice_init(&c.overrides, &config.overrides);
-	ret = 0;
+	ok = true;
 
 	log_info(
 		"configuration loaded: %s, ndp %s, xlat %s, answer from state %s",
@@ -298,8 +298,8 @@ int config_load(void)
 		ndp_mode_name(config.ndp), xlat_mode_name(config.xlat),
 		config.answer_from_state ? "on" : "off");
 out:
-	if (ret)
+	if (!ok)
 		config_free(&c);
 	uci_free_context(ctx);
-	return ret;
+	return ok;
 }

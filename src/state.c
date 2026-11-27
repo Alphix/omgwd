@@ -291,7 +291,7 @@ bool state_instance_native_v6(const uint8_t *instance)
  * as its strings ("fn=Tv"; quoted when empty or containing a space, other
  * unprintable bytes as \DDD). Everything else in the zone file format.
  */
-static int display_rdata(const struct dns_rr *rr, char *buf, size_t len)
+static bool display_rdata(const struct dns_rr *rr, char *buf, size_t len)
 {
 	const uint8_t *d = rr->rdata;
 	size_t o = 0;
@@ -301,7 +301,7 @@ static int display_rdata(const struct dns_rr *rr, char *buf, size_t len)
 		if (!rr->rdlen || dname_len(d) > rr->rdlen)
 			break;
 		dname_to_display(d, buf, len);
-		return 0;
+		return true;
 	case DNS_T_SRV:
 		if (rr->rdlen < 7 || dname_len(d + 6) > rr->rdlen - 6U)
 			break;
@@ -310,7 +310,7 @@ static int display_rdata(const struct dns_rr *rr, char *buf, size_t len)
 		if (o >= len)
 			break;
 		dname_to_display(d + 6, buf + o, len - o);
-		return 0;
+		return true;
 	case DNS_T_TXT:
 		for (size_t i = 0; i < rr->rdlen;) {
 			size_t n = d[i++];
@@ -340,14 +340,12 @@ static int display_rdata(const struct dns_rr *rr, char *buf, size_t len)
 				buf[o++] = '"';
 		}
 		buf[o] = '\0';
-		return 0;
+		return true;
 	default:
 		break;
 	}
 generic:
-	return rr_rdata_to_str(rr->type, rr->rdata, rr->rdlen, buf, len) < 0 ?
-		       -1 :
-		       0;
+	return rr_rdata_to_str(rr->type, rr->rdata, rr->rdlen, buf, len) >= 0;
 }
 
 void state_dump_records(struct blob_buf *b)
@@ -366,7 +364,7 @@ void state_dump_records(struct blob_buf *b)
 		blobmsg_add_string(b, "type",
 				   rr_type_name(r->rr.type, type,
 						sizeof(type)));
-		if (!display_rdata(&r->rr, rdata, sizeof(rdata)))
+		if (display_rdata(&r->rr, rdata, sizeof(rdata)))
 			blobmsg_add_string(b, "data", rdata);
 		blobmsg_add_u8(b, "ipv4", !!(r->families & STATE_V4));
 		blobmsg_add_u8(b, "ipv6", !!(r->families & STATE_V6));

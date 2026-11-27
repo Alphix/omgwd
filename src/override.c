@@ -82,8 +82,8 @@ void overrides_free(struct list_head *l)
 }
 
 /* the values of an option or list, as strings */
-static int get_list(struct uci_section *s, const char *name, char ***out,
-		    size_t *n)
+static bool get_list(struct uci_section *s, const char *name, char ***out,
+		     size_t *n)
 {
 	struct uci_option *o = uci_lookup_option(s->package->ctx, s, name);
 	struct uci_element *e;
@@ -91,26 +91,26 @@ static int get_list(struct uci_section *s, const char *name, char ***out,
 	*out = NULL;
 	*n = 0;
 	if (!o)
-		return 0;
+		return true;
 	if (o->type == UCI_TYPE_STRING) {
 		*out = calloc(1, sizeof(char *));
 		if (!*out || !(**out = strdup(o->v.string)))
-			return -1;
+			return false;
 		*n = 1;
-		return 0;
+		return true;
 	}
 	uci_foreach_element(&o->v.list, e)
 	{
 		char **v = realloc(*out, (*n + 1) * sizeof(char *));
 
 		if (!v)
-			return -1;
+			return false;
 		*out = v;
 		if (!(v[*n] = strdup(e->name)))
-			return -1;
+			return false;
 		(*n)++;
 	}
-	return 0;
+	return true;
 }
 
 static void strip_local(char *s)
@@ -123,7 +123,7 @@ static void strip_local(char *s)
 		s[n - 7] = '\0';
 }
 
-static int parse_subnet(const char *s, struct ov_subnet *out)
+static bool parse_subnet(const char *s, struct ov_subnet *out)
 {
 	char buf[32], *slash;
 	struct in_addr a;
@@ -137,17 +137,17 @@ static int parse_subnet(const char *s, struct ov_subnet *out)
 		*slash = '\0';
 		bits = strtol(slash + 1, &end, 10);
 		if (*end || bits < 0 || bits > 32)
-			return -1;
+			return false;
 	}
 	if (inet_pton(AF_INET, buf, &a) != 1)
-		return -1;
+		return false;
 	out->mask = bits ? 0xffffffffu << (32 - bits) : 0;
 	out->addr = ntohl(a.s_addr) & out->mask;
-	return 0;
+	return true;
 }
 
-static int parse_override(struct uci_section *s, const char *origin,
-			  struct list_head *out)
+static bool parse_override(struct uci_section *s, const char *origin,
+			   struct list_head *out)
 {
 	struct uci_context *ctx = s->package->ctx;
 	struct override *o = calloc(1, sizeof(*o));
@@ -159,14 +159,14 @@ static int parse_override(struct uci_section *s, const char *origin,
 	if (!o || !(o->name = strdup(name)))
 		goto oom;
 
-	if (get_list(s, "network", &o->networks, &o->n_networks) ||
-	    get_list(s, "host", &o->hosts, &o->n_hosts) ||
-	    get_list(s, "instance", &o->instances, &o->n_instances))
+	if (!get_list(s, "network", &o->networks, &o->n_networks) ||
+	    !get_list(s, "host", &o->hosts, &o->n_hosts) ||
+	    !get_list(s, "instance", &o->instances, &o->n_instances))
 		goto oom;
 	for (size_t i = 0; i < o->n_hosts; i++)
 		strip_local(o->hosts[i]);
 
-	if (get_list(s, "service", &v, &n))
+	if (!get_list(s, "service", &v, &n))
 		goto oom;
 	if (n) {
 		o->services = calloc(n, sizeof(*o->services));
@@ -189,14 +189,14 @@ static int parse_override(struct uci_section *s, const char *origin,
 	v = NULL;
 	n = 0;
 
-	if (get_list(s, "ipv4", &v, &n))
+	if (!get_list(s, "ipv4", &v, &n))
 		goto oom;
 	if (n) {
 		o->ipv4 = calloc(n, sizeof(*o->ipv4));
 		if (!o->ipv4)
 			goto oom;
 		for (size_t i = 0; i < n; i++)
-			if (parse_subnet(v[i], &o->ipv4[i])) {
+			if (!parse_subnet(v[i], &o->ipv4[i])) {
 				log_err("override %s: invalid ipv4 '%s'", name,
 					v[i]);
 				goto err;
@@ -230,17 +230,17 @@ static int parse_override(struct uci_section *s, const char *origin,
 		log_warn("override %s sets nothing", name);
 
 	list_add_tail(&o->list, out);
-	return 0;
+	return true;
 oom:
 	log_err("override %s: out of memory", name);
 err:
 	free_strv(v, n);
 	if (o)
 		override_free(o);
-	return -1;
+	return false;
 }
 
-int overrides_parse_section(struct uci_section *s, struct list_head *out)
+bool overrides_parse_section(struct uci_section *s, struct list_head *out)
 {
 	return parse_override(s, "config", out);
 }
@@ -251,16 +251,16 @@ static int filter_quirk(const struct dirent *d)
 }
 
 /* the quirk table: config override sections in UCI files, in lexical order */
-int overrides_load_quirks(struct list_head *out)
+void overrides_load_quirks(struct list_head *out)
 {
 	struct dirent **ents;
 	int n;
 
 	if (!quirk_dir || !*quirk_dir)
-		return 0;
+		return;
 	n = scandir(quirk_dir, &ents, filter_quirk, alphasort);
 	if (n < 0)
-		return 0; /* no quirk table */
+		return; /* no quirk table */
 
 	for (int i = 0; i < n; i++) {
 		struct uci_context *ctx = uci_alloc_context();
@@ -283,8 +283,8 @@ int overrides_load_quirks(struct list_head *out)
 					log_warn(
 						"quirk table %s: ignoring section type '%s'",
 						ents[i]->d_name, s->type);
-				else if (parse_override(s, ents[i]->d_name,
-							out))
+				else if (!parse_override(s, ents[i]->d_name,
+							 out))
 					log_warn(
 						"quirk table %s: ignoring section '%s'",
 						ents[i]->d_name, s->e.name);
@@ -295,7 +295,6 @@ int overrides_load_quirks(struct list_head *out)
 	for (int i = 0; i < n; i++)
 		free(ents[i]);
 	free(ents);
-	return 0;
 }
 
 /* ---- matching and evaluation -------------------------------------------------- */
